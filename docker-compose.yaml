@@ -1,10 +1,11 @@
 version: "3"
 services:
   postgres:
+    stdin_open: true
+    tty: true
     build:
       context: .
     environment:
       - POSTGRES_PASSWORD=password
     ports:
       - 5432:5432
-
