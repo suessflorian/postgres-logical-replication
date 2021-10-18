@@ -64,7 +64,9 @@ Time: 0.005s
 You can see how these WAL files are written before the query is returned in the earlier terminal session.
 
 ## Why do we have WAL files?
+
 TODO: Write notes highlighting
+
 - System diagram (shared buffer, `bg_writer`, `checkpoint`)
 - Consequences without
 - Replication
@@ -119,6 +121,7 @@ Although this is just simple archiving, you will see how this is an important co
 Colloquially known as [replication slots](https://www.postgresql.org/docs/9.4/catalog-pg-replication-slots.html), are mechanisms that more formally wrap `pg_receivewal` that offers easy replication connections with the aim of providing a consistent interface among replication connectors.
 
 You can create these replication slots via
+
 ```
 postgres@localhost:postgres> select * from pg_create_physical_replication_slot('replica');
 +-------------+--------+
@@ -138,7 +141,7 @@ SELECT 1
 Time: 0.009s
 ```
 
-Interestingly, you can also use `pg_receivewal` to stream WAL files to somewhere too! Which technically just chains `pg_receivewal`.
+Interestingly, you can also use `pg_receivewal` to stream WAL files to somewhere too! Which technically chains `pg_receivewal`. `-S, --slot-name` to point to a replication slot.
 
 ```
 postgres@993e83a382c4:~$ pg_receivewal -D stream/ -S replica
@@ -169,17 +172,59 @@ waiting for server to shut down....
  % docker-compose up postgres
 ```
 
-TODO:
-- pg receive logical
+`pg_receivewal` works just the same, you will just notice each log line containing added logical language describing what has happened. We can extract and interpret these WAL files via [`pg_recvlogical`](https://www.postgresql.org/docs/14/app-pgrecvlogical.html) although `pg_recvlogical` relies on replication slots directly, (ie we cannot directly wrap `pg_receivewal`).
+
+We can use `pg_recvlogical` directly to create a logical replication slot;
+
+```
+su postgres
+pg_recvlogical -d postgres --slot extract --create-slot
+pg_recvlogical -d postgres --slot extract --start -f -
+```
+
+_Notice: logical streams differentiate logs from different databases_
+
+\_ inserting some stuff into `postgres` database
+
+```
+ % pgcli -h localhost -U postgres postgres
+Password for postgres:
+Server: PostgreSQL 14.0 (Debian 14.0-1.pgdg110+1)
+Version: 3.2.0
+Home: http://pgcli.com
+postgres@localhost:postgres> create table tmp(val int);
+CREATE TABLE
+Time: 0.006s
+postgres@localhost:postgres> INSERT INTO tmp(val) SELECT g.id FROM generate_series(1, 10) as g(id);
+INSERT 0 10
+Time: 0.006s
+```
+
+And in the previous terminal you will notice logical output of what is happening, far easier to understand than the physical level logging we got before.
+
 - then table equivalent; https://www.postgresql.org/docs/14/logicaldecoding-example.html
 
+#### As JSON changesets
 
-## WAL files as changesets in JSON
+From here you can actually start the source of a messaging queue via [`wal2json`](https://github.com/eulerto/wal2json) via `-P, --plugin` flag.
 
-- show use of `wal2json`, create stream
+```
+
+su postgres
+pg_recvlogical -d postgres --slot test_slot --create-slot -P wal2json
+pg_recvlogical -d postgres --slot test_slot --start -o pretty-print=1 -o add-msg-prefixes=wal2json -f -
+```
+
+And you will now receive more rich, json messages.
+
+## Demo
+
+TODO
+
 - integration of tom arrells messaging queue?
 
 # Interesting utulisations of knowledge above
 
 - unlogged tables (why you would)
 - asynchronous commits
+- publications
