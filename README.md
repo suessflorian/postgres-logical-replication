@@ -5,7 +5,7 @@ I interact with Postgres on a daily basis, albeit typically managed by a service
 Some **features** of personal interest these services typically offer are:
 
 - Point in time recovery (PITR)
-- Heated (or ready to go) backup replica's
+- Heated (or ready to go) replica's
 - Logical replication
 
 I learnt however that these are offered via proxy of _ease_ rather than PostgresQL component expansion.
@@ -65,7 +65,7 @@ You can see how these WAL files are written before the query is returned in the 
 
 ## Why do we have WAL files?
 
-tldr: faster when adhering to strict data integrity requirements.
+tldr: faster when adhering to strict data integrity requirements compared to direct disc writes due to ability of batching expensive DB disc writes.
 
 > If we follow this procedure, we do not need to flush data pages to disk on every transaction commit, because we know that in the event of a crash we will be able to recover the database using the log: any changes that have not been applied to the data pages can be redone from the log records. (This is roll-forward recovery, also known as REDO.)
 > \- [documentation](https://www.postgresql.org/docs/14/wal-intro.html)
@@ -75,9 +75,11 @@ tldr: faster when adhering to strict data integrity requirements.
 - `checkpointer` hard limit (max 2min) adhering dirty buffer flusher at intervals. **pauses everything**, figures out what it can and can not flush.
 - `background writer` flushes based on LRU algo increasing clean pages to go around cheaply.
 
+_Note: WAL files track changes done to the entire cluster_
+
 ## Streaming these WAL files (principle behind backups)
 
-Postgres exports a utility [`pg_receivewal`](https://www.postgresql.org/docs/14/app-pgreceivewal.html) that acts as a read once, immutable [message queue](https://en.wikipedia.org/wiki/Message_queue) allowing you to _stream_ these wall files to.. anywhere (for example archiving).
+Postgres exports a utility [`pg_receivewal`](https://www.postgresql.org/docs/14/app-pgreceivewal.html) that kinda like a [message queue](https://en.wikipedia.org/wiki/Message_queue) allowing you to _stream_ these wall files to.. anywhere (archiving reasons, backups, replicating via forward rolling on the WAL files).
 
 ```
  % docker-compose exec postgres bash
@@ -118,11 +120,11 @@ total 32768
 -rw------- 1 postgres postgres 16777216 Oct 17 23:41 000000010000000000000002.partial
 ```
 
-Although this is just simple archiving, you will see how this is an important concept to know about when it comes to general archiving, backing up and interestingly, the fundamental tool behind: [DB replication](https://www.postgresql.org/docs/14/runtime-config-replication.html).
+Although this is just simple archiving, you will see how this is an important concept to know about when it comes to general archiving, backing up and interestingly, the fundamental tool behind [DB replication](https://www.postgresql.org/docs/14/runtime-config-replication.html).
 
 ## Replication Servers
 
-Colloquially known as [replication slots](https://www.postgresql.org/docs/9.4/catalog-pg-replication-slots.html), are mechanisms that more formally wrap `pg_receivewal` that offers easy replication connections with the aim of providing a consistent interface among replication connectors.
+Colloquially known as [replication slots](https://www.postgresql.org/docs/9.4/catalog-pg-replication-slots.html), are mechanisms that more formally stream WAL files compared to `pg_receivewal` that offers easy replication connections with the aim of providing a consistent interface among replication connectors.
 
 You can create these replication slots via
 
@@ -145,15 +147,20 @@ SELECT 1
 Time: 0.009s
 ```
 
-Interestingly, you can also use `pg_receivewal` to stream WAL files to somewhere too! Which technically chains `pg_receivewal`. `-S, --slot-name` to point to a replication slot.
+Interestingly, you can also use `pg_receivewal` to stream WAL files to somewhere too; `pg_receivewal`. `-S, --slot-name` to point to a replication slot.
 
 ```
 postgres@993e83a382c4:~$ pg_receivewal -D stream/ -S replica
 ```
 
+## Physical Replication (via streaming WAL files)
+Intuitively, it's easy to grasp how one may create a hot standy database providing HA, by exclusively rolling forward on master PG WAL files. This physical replication also has the capability of being synchronous, ie we not only write the transaction in the shared buffer into the local WAL files, but also ensure these are written onto the replica database.
+
+Naturally, this can cascade, by doing recursively doing the same as above, where this replica now acts as a master to another replica.
+
 ## Logical Replication
 
-By default WAL file provides just enough information for basic replica support, which writes enough data to support WAL archiving and replication, including running read-only queries on a standby server. This is informed _physically_ which uses exact block addresses and byte-by-byte replication. We can change the `wal_level` to allow logical decoding of the WAL files allowing a more generic consumer ([difference between logical and physical replication](https://www.postgresql.org/docs/14/logical-replication.html)).
+By default WAL file provides just enough information for basic replica support, which writes enough data to support WAL archiving and replication, including running read-only queries on a standby server. This is informed _physically_ which uses exact block addresses for byte-by-byte replication. We can change the `wal_level` to allow logical decoding of the WAL files allowing a more generic consumer ([difference between logical and physical replication](https://www.postgresql.org/docs/14/logical-replication.html)).
 
 _edit `postgres.conf` to change [`wal_level`](https://www.postgresql.org/docs/14/runtime-config-wal.html)_
 
