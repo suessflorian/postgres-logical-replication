@@ -64,6 +64,7 @@ Time: 0.005s
 You can see how these WAL files are written before the query is returned in the earlier terminal session.
 
 ## Why do we have WAL files?
+
 tldr: faster when adhering to strict data integrity requirements.
 
 > If we follow this procedure, we do not need to flush data pages to disk on every transaction commit, because we know that in the event of a crash we will be able to recover the database using the log: any changes that have not been applied to the data pages can be redone from the log records. (This is roll-forward recovery, also known as REDO.)
@@ -266,10 +267,9 @@ Time: 0.016s
 
 #### As JSON changesets
 
-From here you can actually start the source of a messaging queue via [`wal2json`](https://github.com/eulerto/wal2json) via `-P, --plugin` flag.
+Via [`wal2json`](https://github.com/eulerto/wal2json) via `-P, --plugin` flag.
 
 ```
-
 su postgres
 pg_recvlogical -d postgres --slot test_slot --create-slot -P wal2json
 pg_recvlogical -d postgres --slot test_slot --start -o pretty-print=1 -o add-msg-prefixes=wal2json -f -
@@ -278,6 +278,9 @@ pg_recvlogical -d postgres --slot test_slot --start -o pretty-print=1 -o add-msg
 And you will now receive more rich, json messages.
 
 ## Demo
+`pg_recvlogical` has
+
+
 
 TODO
 
