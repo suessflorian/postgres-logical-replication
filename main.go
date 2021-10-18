@@ -2,23 +2,33 @@ package main
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgproto3/v2"
+	"github.com/sirupsen/logrus"
 )
 
 const CONN = "postgres://postgres:password@localhost/postgres?replication=database"
 const SLOT_NAME = "test_slot3"
 const OUTPUT_PLUGIN = "pgoutput"
 
+var ACTOR = struct {
+	Relation string
+	Columns  []string
+}{}
+
 func main() {
-	ctx := context.Background()
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
 	/*
 			   notice the drop down from pgx to pgconn,
-		     this is due to protocol differences when consuming replication vs simple SQL execution
+		     this is due to protocol differences when consuming logical replication changesets vs simple SQL execution
 	*/
 	conn, err := pgconn.Connect(ctx, CONN)
 	if err != nil {
@@ -26,92 +36,93 @@ func main() {
 	}
 	defer conn.Close(ctx)
 
-	sysident, err := pglogrepl.IdentifySystem(context.Background(), conn)
-	if err != nil {
-		log.Fatalln("IdentifySystem failed:", err)
-	}
-	log.Println("SystemID:", sysident.SystemID, "Timeline:", sysident.Timeline, "XLogPos:", sysident.XLogPos, "DBName:", sysident.DBName)
-
-	// Does this
-	result := conn.Exec(context.Background(), "DROP PUBLICATION IF EXISTS pglogrepl_demo;")
-	_, err = result.ReadAll()
-	if err != nil {
-		log.Fatalln("drop publication if exists error", err)
+	// 1. ensure publication exists
+	if _, err := conn.Exec(ctx, "DROP PUBLICATION IF EXISTS gizmo_pub").ReadAll(); err != nil {
+		logrus.WithError(err).Fatal("failed to drop publication error")
 	}
 
-	result = conn.Exec(context.Background(), "CREATE PUBLICATION pglogrepl_demo FOR ALL TABLES;")
-	_, err = result.ReadAll()
-	if err != nil {
-		log.Fatalln("create publication error", err)
-	}
-	log.Println("create publication pglogrepl_demo")
-
-	pluginArguments := []string{"proto_version '1'", "publication_names 'pglogrepl_demo'"}
-
-	_, err = pglogrepl.CreateReplicationSlot(context.Background(), conn, SLOT_NAME, OUTPUT_PLUGIN, pglogrepl.CreateReplicationSlotOptions{Temporary: true})
-	if err != nil {
-		log.Fatalln("CreateReplicationSlot failed:", err)
+	if _, err := conn.Exec(ctx, "CREATE PUBLICATION gizmo_pub FOR TABLE gizmos").ReadAll(); err != nil {
+		logrus.WithError(err).Fatal("failed to create publication")
 	}
 
-	err = pglogrepl.StartReplication(ctx, conn, SLOT_NAME, sysident.XLogPos, pglogrepl.StartReplicationOptions{PluginArgs: pluginArguments})
-	if err != nil {
-		log.Fatalln("StartReplication failed:", err)
+	// 2. create temproary replication slot server
+	if _, err = pglogrepl.CreateReplicationSlot(ctx, conn, SLOT_NAME, OUTPUT_PLUGIN, pglogrepl.CreateReplicationSlotOptions{Temporary: true}); err != nil {
+		logrus.WithError(err).Fatal("failed to create a replication slot")
 	}
 
-	clientXLogPos := sysident.XLogPos
-	standbyMessageTimeout := time.Second * 10
-	nextStandbyMessageDeadline := time.Now().Add(standbyMessageTimeout)
+	var msgPointer pglogrepl.LSN
+	pluginArguments := []string{"proto_version '1'", "publication_names 'gizmo_pub'"}
 
-	for {
-		if time.Now().After(nextStandbyMessageDeadline) {
-			err = pglogrepl.SendStandbyStatusUpdate(context.Background(), conn, pglogrepl.StandbyStatusUpdate{WALWritePosition: clientXLogPos})
-			if err != nil {
-				log.Fatalln("SendStandbyStatusUpdate failed:", err)
+	// 3. establish connection
+	err = pglogrepl.StartReplication(ctx, conn, SLOT_NAME, msgPointer, pglogrepl.StartReplicationOptions{PluginArgs: pluginArguments})
+	if err != nil {
+		logrus.WithError(err).Fatal("failed to establish start replication")
+	}
+
+	var pingTime time.Time
+	for ctx.Err() != context.Canceled {
+		if time.Now().After(pingTime) {
+			if err = pglogrepl.SendStandbyStatusUpdate(ctx, conn, pglogrepl.StandbyStatusUpdate{WALWritePosition: msgPointer}); err != nil {
+				logrus.WithError(err).Fatal("failed to send standby update")
 			}
-			log.Println("Sent Standby status message")
-			nextStandbyMessageDeadline = time.Now().Add(standbyMessageTimeout)
+			pingTime = time.Now().Add(10 * time.Second)
+			logrus.Debug("client: please standby")
 		}
 
-		ctx, cancel := context.WithDeadline(context.Background(), nextStandbyMessageDeadline)
+		ctx, cancel := context.WithTimeout(ctx, time.Second*10)
+		defer cancel()
+
 		msg, err := conn.ReceiveMessage(ctx)
-		cancel()
+		if pgconn.Timeout(err) {
+			continue
+		}
 		if err != nil {
-			if pgconn.Timeout(err) {
-				continue
-			}
-			log.Fatalln("ReceiveMessage failed:", err)
+			logrus.WithError(err).Fatal("something went while listening for message")
 		}
 
 		switch msg := msg.(type) {
 		case *pgproto3.CopyData:
 			switch msg.Data[0] {
 			case pglogrepl.PrimaryKeepaliveMessageByteID:
-				pkm, err := pglogrepl.ParsePrimaryKeepaliveMessage(msg.Data[1:])
-				if err != nil {
-					log.Fatalln("ParsePrimaryKeepaliveMessage failed:", err)
-				}
-				log.Println("Primary Keepalive Message =>", "ServerWALEnd:", pkm.ServerWALEnd, "ServerTime:", pkm.ServerTime, "ReplyRequested:", pkm.ReplyRequested)
-
-				if pkm.ReplyRequested {
-					nextStandbyMessageDeadline = time.Time{}
-				}
+				logrus.Debug("server: confirmed standby")
 
 			case pglogrepl.XLogDataByteID:
-				xld, err := pglogrepl.ParseXLogData(msg.Data[1:])
+				walLog, err := pglogrepl.ParseXLogData(msg.Data[1:])
 				if err != nil {
-					log.Fatalln("ParseXLogData failed:", err)
+					logrus.WithError(err).Fatal("failed to parse logical WAL log:", err)
 				}
-				log.Println("XLogData =>", "WALStart", xld.WALStart, "ServerWALEnd", xld.ServerWALEnd, "ServerTime:", xld.ServerTime, "WALData", string(xld.WALData))
-				logicalMsg, err := pglogrepl.Parse(xld.WALData)
-				if err != nil {
-					log.Fatalf("Parse logical replication message: %s", err)
-				}
-				log.Printf("Receive a logical replication message: %s", logicalMsg.Type())
 
-				clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
+				var msg pglogrepl.Message
+				if msg, err = pglogrepl.Parse(walLog.WALData); err != nil {
+					logrus.WithError(err).Fatalf("failed to parse logical replication message")
+				}
+
+				/*
+				   simply logging here, but could easily push onto a message queue or something
+				*/
+				switch m := msg.(type) {
+				case *pglogrepl.RelationMessage:
+					ACTOR.Columns = []string{}
+					for _, col := range m.Columns {
+						ACTOR.Columns = append(ACTOR.Columns, col.Name)
+					}
+					ACTOR.Relation = m.RelationName
+				case *pglogrepl.InsertMessage:
+					var sb strings.Builder
+					sb.WriteString(fmt.Sprintf("INSERT %s(", ACTOR.Relation))
+					for i := 0; i < len(ACTOR.Columns); i++ {
+						sb.WriteString(fmt.Sprintf("%s: %s", ACTOR.Columns[i], string(m.Tuple.Columns[i].Data)))
+					}
+					sb.WriteString(")\n")
+					logrus.Info(sb.String())
+				case *pglogrepl.DeleteMessage:
+					logrus.Info("DELETE")
+				case *pglogrepl.TruncateMessage:
+					logrus.Info("ALL GONE (TRUNCATE)")
+				}
 			}
 		default:
-			log.Printf("Received unexpected message: %T\n", msg)
+			logrus.Warnf("received unexpected message: %T\n", msg)
 		}
 
 	}

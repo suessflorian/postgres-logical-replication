@@ -312,11 +312,8 @@ Time: 0.023s
 
 Now you can insert into this table from two places, every change event propogates to `gizmos` table in the "subscriber" host.
 
-TODO:
-- docker compose example
-- how do subscription/publication (automatic creation of replication slot?)
-
-## Demo
+## Streaming into an event queue example
+We've done a lot at this point, it's easy to see how we could extend this with a quick code example where we use a `PUBLICATION` to capture change events and place them onto some sort of queue.
 
 ```
 go run .
