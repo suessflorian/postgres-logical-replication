@@ -184,7 +184,7 @@ pg_recvlogical -d postgres --slot extract --start -f -
 
 _Notice: logical streams differentiate logs from different databases_
 
-\_ inserting some stuff into `postgres` database
+_inserting some stuff into `postgres` database_
 
 ```
  % pgcli -h localhost -U postgres postgres
@@ -202,7 +202,63 @@ Time: 0.006s
 
 And in the previous terminal you will notice logical output of what is happening, far easier to understand than the physical level logging we got before.
 
-- then table equivalent; https://www.postgresql.org/docs/14/logicaldecoding-example.html
+```
+BEGIN 736
+table public.tmp: INSERT: val[integer]:1
+table public.tmp: INSERT: val[integer]:2
+table public.tmp: INSERT: val[integer]:3
+table public.tmp: INSERT: val[integer]:4
+table public.tmp: INSERT: val[integer]:5
+table public.tmp: INSERT: val[integer]:6
+table public.tmp: INSERT: val[integer]:7
+table public.tmp: INSERT: val[integer]:8
+table public.tmp: INSERT: val[integer]:9
+table public.tmp: INSERT: val[integer]:10
+COMMIT 736
+```
+
+Now ofcourse you can do this inside Postgres via [`pg_create_logical_replication_slot (see Replication Functions)`](https://www.postgresql.org/docs/9.4/functions-admin.html).
+
+Since you've already created a replication slot above - you can utulise it right away (seek more complete example [here](https://www.postgresql.org/docs/14/logicaldecoding-example.html));
+
+```
+postgres@localhost:postgres> SELECT * FROM pg_logical_slot_get_changes('extract', NULL, NULL);
++-------+-------+--------+
+| lsn   | xid   | data   |
+|-------+-------+--------|
++-------+-------+--------+
+SELECT 0
+Time: 0.018s
+postgres@localhost:postgres> INSERT INTO tmp(val) SELECT g.id FROM generate_series(1, 10) as g(id);
+INSERT 0 10
+Time: 0.006s
+postgres@localhost:postgres> SELECT * FROM pg_logical_slot_get_changes('extract', NULL, NULL);
++-----------+-------+-------------------------------------------+
+| lsn       | xid   | data                                      |
+|-----------+-------+-------------------------------------------|
+| 0/17143F8 | 737   | BEGIN 737                                 |
+| 0/17143F8 | 737   | table public.tmp: INSERT: val[integer]:1  |
+| 0/1714748 | 737   | table public.tmp: INSERT: val[integer]:2  |
+| 0/1714788 | 737   | table public.tmp: INSERT: val[integer]:3  |
+| 0/17147C8 | 737   | table public.tmp: INSERT: val[integer]:4  |
+| 0/1714808 | 737   | table public.tmp: INSERT: val[integer]:5  |
+| 0/1714848 | 737   | table public.tmp: INSERT: val[integer]:6  |
+| 0/1714888 | 737   | table public.tmp: INSERT: val[integer]:7  |
+| 0/17148C8 | 737   | table public.tmp: INSERT: val[integer]:8  |
+| 0/1714908 | 737   | table public.tmp: INSERT: val[integer]:9  |
+| 0/1714948 | 737   | table public.tmp: INSERT: val[integer]:10 |
+| 0/17149B8 | 737   | COMMIT 737                                |
++-----------+-------+-------------------------------------------+
+SELECT 12
+Time: 0.015s
+postgres@localhost:postgres> SELECT * FROM pg_logical_slot_get_changes('extract', NULL, NULL);
++-------+-------+--------+
+| lsn   | xid   | data   |
+|-------+-------+--------|
++-------+-------+--------+
+SELECT 0
+Time: 0.016s
+```
 
 #### As JSON changesets
 
