@@ -36,7 +36,7 @@ drwx------ 2 postgres postgres     4096 Oct 17 21:59 archive_status
 
 _Notes_:
 
-- The filenaming convention here is seperated into two parts, leading 8 hexadecimal values represent a time element (epoched to when the DB cluster first started). Remaining 16 values increment as needed.
+- [LSN](https://www.postgresql.org/docs/14/datatype-pg-lsn.html) derived filename convention here, leading 8 hexadecimal values represent a time element (epoched to when the DB cluster first started). Remaining 16 values increment as needed.
 - WAL files are binary files with allocation of 16MB - this is changeable.
 
 You can `--follow` these WAL files;
@@ -64,12 +64,15 @@ Time: 0.005s
 You can see how these WAL files are written before the query is returned in the earlier terminal session.
 
 ## Why do we have WAL files?
+tldr: faster when adhering to strict data integrity requirements.
 
-TODO: Write notes highlighting
+> If we follow this procedure, we do not need to flush data pages to disk on every transaction commit, because we know that in the event of a crash we will be able to recover the database using the log: any changes that have not been applied to the data pages can be redone from the log records. (This is roll-forward recovery, also known as REDO.)
+> \- [documentation](https://www.postgresql.org/docs/14/wal-intro.html)
 
-- System diagram (shared buffer, `bg_writer`, `checkpoint`)
-- Consequences without
-- Replication
+![WAL-diagram](./assets/WAL-diagram.svg)
+
+- `checkpointer` hard limit (max 2min) adhering dirty buffer flusher at intervals. **pauses everything**, figures out what it can and can not flush.
+- `background writer` flushes based on LRU algo increasing clean pages to go around cheaply.
 
 ## Streaming these WAL files (principle behind backups)
 
@@ -151,7 +154,7 @@ postgres@993e83a382c4:~$ pg_receivewal -D stream/ -S replica
 
 By default WAL file provides just enough information for basic replica support, which writes enough data to support WAL archiving and replication, including running read-only queries on a standby server. This is informed _physically_ which uses exact block addresses and byte-by-byte replication. We can change the `wal_level` to allow logical decoding of the WAL files allowing a more generic consumer ([difference between logical and physical replication](https://www.postgresql.org/docs/14/logical-replication.html)).
 
-\_edit `postgres.conf` to change [`wal_level`](https://www.postgresql.org/docs/14/runtime-config-wal.html)
+_edit `postgres.conf` to change [`wal_level`](https://www.postgresql.org/docs/14/runtime-config-wal.html)_
 
 ```
 root@73d37a504686:/# cd $PGDATA/
@@ -217,11 +220,12 @@ table public.tmp: INSERT: val[integer]:10
 COMMIT 736
 ```
 
-Now ofcourse you can do this inside Postgres via [`pg_create_logical_replication_slot (see Replication Functions)`](https://www.postgresql.org/docs/9.4/functions-admin.html).
+Now ofcourse you can do this inside Postgres via [`pg_create_logical_replication_slot` (see Replication Functions)](https://www.postgresql.org/docs/9.4/functions-admin.html).
 
 Since you've already created a replication slot above - you can utulise it right away (seek more complete example [here](https://www.postgresql.org/docs/14/logicaldecoding-example.html));
 
 ```
+postgres@localhost:postgres> -- \df pg_logical_slot_get_changes
 postgres@localhost:postgres> SELECT * FROM pg_logical_slot_get_changes('extract', NULL, NULL);
 +-------+-------+--------+
 | lsn   | xid   | data   |
