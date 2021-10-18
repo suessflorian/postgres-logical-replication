@@ -9,3 +9,15 @@ services:
       - POSTGRES_PASSWORD=password
     ports:
       - 5432:5432
+    expose:
+      - 5432
+  subscriber:
+    stdin_open: true
+    tty: true
+    build:
+      context: .
+    environment:
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_USER=subscriber
+    ports:
+      - 5433:5432

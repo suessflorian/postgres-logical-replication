@@ -275,16 +275,52 @@ pg_recvlogical -d postgres --slot test_slot --create-slot -P wal2json
 pg_recvlogical -d postgres --slot test_slot --start -o pretty-print=1 -o add-msg-prefixes=wal2json -f -
 ```
 
-And you will now receive more rich, json messages.
+And you will now receive more rich, json messages. Typically you'll find most event queues utulise this output format.
+
+# Publication
+
+[Publication](https://www.postgresql.org/docs/14/logical-replication-publication.html)'s abstract all details above, that is, WAL file -> logical changeset conversion & replication slot management, and pairs it with fine grain publishing controls specifc to tables and even specified change events (`INSERT`, `DELETE`, etc...). This, alongside the idiom of a _publication_ make this an intuitive tool to use for pub/sub architectures where one DB subscribes to another DB's table.
+
+Only you're the wiser, and you know exactly what is going on under the hood by now.
+
+_A demonstration nevertheless_
+```
+postgres@localhost:postgres> CREATE TABLE gizmos(val int);
+CREATE TABLE
+Time: 0.005s
+postgres@localhost:postgres> CREATE PUBLICATION gizmo_pub FOR TABLE gizmos;
+CREATE PUBLICATION
+Time: 0.004s
+```
+
+_In another terminal_
+```
+ % docker-compose up --detach subscriber
+postgres-wal_subscriber_1 is up-to-date
+ % pgcli -p 5433 -h localhost -U subscriber postgres
+Password for subscriber:
+Server: PostgreSQL 14.0 (Debian 14.0-1.pgdg110+1)
+Version: 3.2.0
+Home: http://pgcli.com
+postgres> CREATE TABLE gizmos(val int);
+postgres> CREATE SUBSCRIPTION gizmo_sub CONNECTION 'dbname=postgres host=postgres port=5432 password=password' PUBLICATION gizmo_pub;
+NOTICE:  created replication slot "gizmo_sub" on publisher
+
+CREATE SUBSCRIPTION
+Time: 0.023s
+```
+
+Now you can insert into this table from two places, every change event propogates to `gizmos` table in the "subscriber" host.
+
+TODO:
+- docker compose example
+- how do subscription/publication (automatic creation of replication slot?)
 
 ## Demo
-`pg_recvlogical` has
 
-
-
-TODO
-
-- integration of tom arrells messaging queue?
+```
+go run .
+```
 
 # Interesting utulisations of knowledge above
 

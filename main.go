@@ -32,6 +32,7 @@ func main() {
 	}
 	log.Println("SystemID:", sysident.SystemID, "Timeline:", sysident.Timeline, "XLogPos:", sysident.XLogPos, "DBName:", sysident.DBName)
 
+	// Does this
 	result := conn.Exec(context.Background(), "DROP PUBLICATION IF EXISTS pglogrepl_demo;")
 	_, err = result.ReadAll()
 	if err != nil {
@@ -105,7 +106,7 @@ func main() {
 				if err != nil {
 					log.Fatalf("Parse logical replication message: %s", err)
 				}
-        log.Printf("Receive a logical replication message: %s", logicalMsg.Type())
+				log.Printf("Receive a logical replication message: %s", logicalMsg.Type())
 
 				clientXLogPos = xld.WALStart + pglogrepl.LSN(len(xld.WALData))
 			}
