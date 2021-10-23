@@ -154,6 +154,7 @@ postgres@993e83a382c4:~$ pg_receivewal -D stream/ -S replica
 ```
 
 ## Physical Replication (via streaming WAL files)
+
 Intuitively, it's easy to grasp how one may create a hot standy database providing HA, by exclusively rolling forward on master PG WAL files. This physical replication also has the capability of being synchronous, ie we not only write the transaction in the shared buffer into the local WAL files, but also ensure these are written onto the replica database.
 
 Naturally, this can cascade, by doing recursively doing the same as above, where this replica now acts as a master to another replica.
@@ -291,6 +292,7 @@ And you will now receive more rich, json messages. Typically you'll find most ev
 Only you're the wiser, and you know exactly what is going on under the hood by now.
 
 _A demonstration nevertheless_
+
 ```
 postgres@localhost:postgres> CREATE TABLE gizmos(val int);
 CREATE TABLE
@@ -301,6 +303,7 @@ Time: 0.004s
 ```
 
 _In another terminal_
+
 ```
  % docker-compose up --detach subscriber
 postgres-wal_subscriber_1 is up-to-date
@@ -319,7 +322,8 @@ Time: 0.023s
 
 Now you can insert into this table from two places, every change event propogates to `gizmos` table in the "subscriber" host.
 
-## Streaming into an event queue example
+## Streaming into a Go context
+
 We've done a lot at this point, it's easy to see how we could extend this with a quick code example where we use a `PUBLICATION` to capture change events and place them onto some sort of queue.
 
 ```
@@ -328,6 +332,18 @@ go run .
 
 # Interesting utulisations of knowledge above
 
-- unlogged tables (why you would)
-- asynchronous commits
-- publications
+### Unlogged Tables
+
+Part of the [`CREATE TABLE`](https://www.postgresql.org/docs/14/sql-createtable.html) option set;
+
+> Data written to unlogged tables is not written to the write-ahead log, which makes them considerably faster than ordinary tables.
+
+But we know what that means, that means that these tables are now not crash safe. Suitable for ephemeral tables. [Performance benchmarks here](https://www.depesz.com/2011/01/03/waiting-for-9-1-unlogged-tables/).
+
+### Asynchronous commits
+
+Rather than batch claiming all modifications on a table should not be written to the WAL, you can also fine tune whwat specific transactions are written to the WAL [see more here](https://www.postgresql.org/docs/current/wal-async-commit.html).
+
+---
+
+Not to say that these are features are to jump on, far from it, as WAL directly [intends to garantuees _data validity_](http://127.0.0.1:8271/page/4#wal-introduction) - nessecary due to the introduction of the [`shared_buffer`](https://www.postgresql.org/docs/14/runtime-config-resource.html#RUNTIME-CONFIG-RESOURCE-MEMORY).

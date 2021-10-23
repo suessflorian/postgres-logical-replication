@@ -15,13 +15,15 @@ import (
 )
 
 const CONN = "postgres://postgres:password@localhost/postgres?replication=database"
-const SLOT_NAME = "test_slot3"
+const SLOT_NAME = "go_slot"
 const OUTPUT_PLUGIN = "pgoutput"
 
 var ACTOR = struct {
 	Relation string
 	Columns  []string
 }{}
+
+// TODO: add migrations for smooth running
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
