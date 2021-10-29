@@ -24,6 +24,7 @@ var ACTOR = struct {
 }{}
 
 // TODO: add migrations for smooth running
+var migration = "CREATE TABLE IF NOT EXISTS gizmos(val int)"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -37,6 +38,11 @@ func main() {
 		panic(err)
 	}
 	defer conn.Close(ctx)
+
+	// 0. migrations
+	if _, err := conn.Exec(ctx, migration).ReadAll(); err != nil {
+		logrus.WithError(err).Fatal("failed to run migrations")
+	}
 
 	// 1. ensure publication exists
 	if _, err := conn.Exec(ctx, "DROP PUBLICATION IF EXISTS gizmo_pub").ReadAll(); err != nil {
